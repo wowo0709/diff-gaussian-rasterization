@@ -17,7 +17,7 @@ namespace cg = cooperative_groups;
 
 // Backward pass for conversion of spherical harmonics to RGB for
 // each Gaussian.
-__device__ void computeColorFromSH(int idx, int deg, int max_coeffs, const glm::vec3* means, glm::vec3 campos, const float* shs, const bool* clamped, const glm::vec3* dL_dcolor, glm::vec3* dL_dmeans, glm::vec3* dL_dshs, float* dL_dcampos, const bool enable_sh_grad)
+__device__ void computeColorFromSH(int idx, int deg, int max_coeffs, const glm::vec3* means, glm::vec3 campos, const float* shs, const bool* clamped, const glm::vec3* dL_dcolor, glm::vec3* dL_dmeans, glm::vec3* dL_dshs, float* dL_dcam, const bool enable_sh_grad)
 {
   // Compute intermediate values, as it is done during forward
   glm::vec3 pos = means[idx];
@@ -133,9 +133,9 @@ __device__ void computeColorFromSH(int idx, int deg, int max_coeffs, const glm::
   float3 dL_dmean = dnormvdv(float3{ dir_orig.x, dir_orig.y, dir_orig.z }, float3{ dL_ddir.x, dL_ddir.y, dL_ddir.z });
 
   if(enable_sh_grad) {
-    dL_dcampos[0] += -dL_dmean.x;
-    dL_dcampos[1] += -dL_dmean.y;
-    dL_dcampos[2] += -dL_dmean.z;
+    dL_dcam[0] += -dL_dmean.x;
+    dL_dcam[1] += -dL_dmean.y;
+    dL_dcam[2] += -dL_dmean.z;
   }
   // Gradients of loss w.r.t. Gaussian means, but only the portion 
   // that is caused because the mean affects the view-dependent color.
@@ -165,6 +165,9 @@ __global__ void computeCov2DCUDA(int P,
 
   // Reading location of 3D covariance for this Gaussian
   const float* cov3D = cov3Ds + 6 * idx;
+
+  // Reading location of dL_dviewmatrix for this Gaussian
+  float* dL_dview = dL_dviewmatrix + 16 * idx;
 
   // Fetch gradients, recompute 2D covariance and relevant 
   // intermediate forward results needed in the backward.
@@ -263,15 +266,15 @@ __global__ void computeCov2DCUDA(int P,
 
   if(enable_cov_grad) {
     // Notably the glm::mat multiply order is transposed 
-    dL_dviewmatrix[0] += J[0][0] * dL_dT00 + J[1][0] * dL_dT10; // W[0][0]
-    dL_dviewmatrix[4] += J[0][0] * dL_dT01 + J[1][0] * dL_dT11; // W[0][1]
-    dL_dviewmatrix[8] += J[0][0] * dL_dT02 + J[1][0] * dL_dT12; // W[0][2]
-    dL_dviewmatrix[1] += J[0][1] * dL_dT00 + J[1][1] * dL_dT10; // W[1][0]
-    dL_dviewmatrix[5] += J[0][1] * dL_dT01 + J[1][1] * dL_dT11; // W[1][1]
-    dL_dviewmatrix[9] += J[0][1] * dL_dT02 + J[1][1] * dL_dT12; // W[1][2]
-    dL_dviewmatrix[2] += J[0][2] * dL_dT00 + J[1][2] * dL_dT10; // W[2][0]
-    dL_dviewmatrix[6] += J[0][2] * dL_dT01 + J[1][2] * dL_dT11; // W[2][1]
-    dL_dviewmatrix[10] += J[0][2] * dL_dT02 + J[1][2] * dL_dT12; // W[2][2]
+    dL_dview[0] += J[0][0] * dL_dT00 + J[1][0] * dL_dT10; // W[0][0]
+    dL_dview[4] += J[0][0] * dL_dT01 + J[1][0] * dL_dT11; // W[0][1]
+    dL_dview[8] += J[0][0] * dL_dT02 + J[1][0] * dL_dT12; // W[0][2]
+    dL_dview[1] += J[0][1] * dL_dT00 + J[1][1] * dL_dT10; // W[1][0]
+    dL_dview[5] += J[0][1] * dL_dT01 + J[1][1] * dL_dT11; // W[1][1]
+    dL_dview[9] += J[0][1] * dL_dT02 + J[1][1] * dL_dT12; // W[1][2]
+    dL_dview[2] += J[0][2] * dL_dT00 + J[1][2] * dL_dT10; // W[2][0]
+    dL_dview[6] += J[0][2] * dL_dT01 + J[1][2] * dL_dT11; // W[2][1]
+    dL_dview[10] += J[0][2] * dL_dT02 + J[1][2] * dL_dT12; // W[2][2]
   }
 
   float tz = 1.f / t.z;
@@ -293,18 +296,18 @@ __global__ void computeCov2DCUDA(int P,
   dL_dmeans[idx] = dL_dmean;
 
   if(enable_cov_grad) {
-    dL_dviewmatrix[0] += dL_dtx * mean.x;
-    dL_dviewmatrix[1] += dL_dty * mean.x;
-    dL_dviewmatrix[2] += dL_dtz * mean.x;
-    dL_dviewmatrix[4] += dL_dtx * mean.y;
-    dL_dviewmatrix[5] += dL_dty * mean.y;
-    dL_dviewmatrix[6] += dL_dtz * mean.y;
-    dL_dviewmatrix[8] += dL_dtx * mean.z;
-    dL_dviewmatrix[9] += dL_dty * mean.z;
-    dL_dviewmatrix[10] += dL_dtz * mean.z;
-    dL_dviewmatrix[12] += dL_dtx;
-    dL_dviewmatrix[13] += dL_dty;
-    dL_dviewmatrix[14] += dL_dtz;
+    dL_dview[0] += dL_dtx * mean.x;
+    dL_dview[1] += dL_dty * mean.x;
+    dL_dview[2] += dL_dtz * mean.x;
+    dL_dview[4] += dL_dtx * mean.y;
+    dL_dview[5] += dL_dty * mean.y;
+    dL_dview[6] += dL_dtz * mean.y;
+    dL_dview[8] += dL_dtx * mean.z;
+    dL_dview[9] += dL_dty * mean.z;
+    dL_dview[10] += dL_dtz * mean.z;
+    dL_dview[12] += dL_dtx;
+    dL_dview[13] += dL_dty;
+    dL_dview[14] += dL_dtz;
   }
 }
 
@@ -481,18 +484,23 @@ __global__ void preprocessCUDA(
   // of cov2D and following SH conversion also affects it.
   dL_dmeans[idx] += dL_dmean;
 
-  dL_dprojmatrix[0] += m.x * m_w * dL_dmean2D[idx].x;
-  dL_dprojmatrix[1] += m.x * m_w * dL_dmean2D[idx].y;
-  dL_dprojmatrix[3] += (- m.x * mul1) * dL_dmean2D[idx].x + (- m.x * mul2) * dL_dmean2D[idx].y;
-  dL_dprojmatrix[4] += m.y * m_w * dL_dmean2D[idx].x;
-  dL_dprojmatrix[5] += m.y * m_w * dL_dmean2D[idx].y;
-  dL_dprojmatrix[7] += (- m.y * mul1) * dL_dmean2D[idx].x + (- m.y * mul2) * dL_dmean2D[idx].y;
-  dL_dprojmatrix[8] += m.z * m_w * dL_dmean2D[idx].x;
-  dL_dprojmatrix[9] += m.z * m_w * dL_dmean2D[idx].y;
-  dL_dprojmatrix[11] += (- m.z * mul1) * dL_dmean2D[idx].x + (- m.z * mul2) * dL_dmean2D[idx].y;
-  dL_dprojmatrix[12] += m_w * dL_dmean2D[idx].x;
-  dL_dprojmatrix[13] += m_w * dL_dmean2D[idx].y;
-  dL_dprojmatrix[15] += (- mul1) * dL_dmean2D[idx].x + (- mul2) * dL_dmean2D[idx].y;
+  // Reading location of dL_dviewmatrix/projmatrix/campos for this Gaussian
+  float* dL_dview = dL_dviewmatrix + 16 * idx;
+  float* dL_dproj = dL_dprojmatrix + 16 * idx;
+  float* dL_dcam = dL_dcampos + 3 * idx;
+
+  dL_dproj[0] += m.x * m_w * dL_dmean2D[idx].x;
+  dL_dproj[1] += m.x * m_w * dL_dmean2D[idx].y;
+  dL_dproj[3] += (- m.x * mul1) * dL_dmean2D[idx].x + (- m.x * mul2) * dL_dmean2D[idx].y;
+  dL_dproj[4] += m.y * m_w * dL_dmean2D[idx].x;
+  dL_dproj[5] += m.y * m_w * dL_dmean2D[idx].y;
+  dL_dproj[7] += (- m.y * mul1) * dL_dmean2D[idx].x + (- m.y * mul2) * dL_dmean2D[idx].y;
+  dL_dproj[8] += m.z * m_w * dL_dmean2D[idx].x;
+  dL_dproj[9] += m.z * m_w * dL_dmean2D[idx].y;
+  dL_dproj[11] += (- m.z * mul1) * dL_dmean2D[idx].x + (- m.z * mul2) * dL_dmean2D[idx].y;
+  dL_dproj[12] += m_w * dL_dmean2D[idx].x;
+  dL_dproj[13] += m_w * dL_dmean2D[idx].y;
+  dL_dproj[15] += (- mul1) * dL_dmean2D[idx].x + (- mul2) * dL_dmean2D[idx].y;
 
   // the w must be equal to 1 for view^T * [x,y,z,1]
   float3 m_view = transformPoint4x3(m, view);
@@ -508,18 +516,18 @@ __global__ void preprocessCUDA(
   // That's the third part of the mean gradient.
   dL_dmeans[idx] += dL_dmean2;
 
-  dL_dviewmatrix[2] += m.x * dL_ddepth[idx];
-  dL_dviewmatrix[6] += m.y * dL_ddepth[idx];
-  dL_dviewmatrix[10] += m.z * dL_ddepth[idx];
-  dL_dviewmatrix[14] += dL_ddepth[idx];
-  dL_dviewmatrix[3] += (- m.x * mul3) * dL_ddepth[idx];
-  dL_dviewmatrix[7] += (- m.y * mul3) * dL_ddepth[idx];
-  dL_dviewmatrix[11] += (- m.z * mul3) * dL_ddepth[idx];
-  dL_dviewmatrix[15] += (- mul3) * dL_ddepth[idx];
+  dL_dview[2] += m.x * dL_ddepth[idx];
+  dL_dview[6] += m.y * dL_ddepth[idx];
+  dL_dview[10] += m.z * dL_ddepth[idx];
+  dL_dview[14] += dL_ddepth[idx];
+  dL_dview[3] += (- m.x * mul3) * dL_ddepth[idx];
+  dL_dview[7] += (- m.y * mul3) * dL_ddepth[idx];
+  dL_dview[11] += (- m.z * mul3) * dL_ddepth[idx];
+  dL_dview[15] += (- mul3) * dL_ddepth[idx];
 
   // Compute gradient updates due to computing colors from SHs
   if (shs)
-    computeColorFromSH(idx, D, M, (glm::vec3*)means, *campos, shs, clamped, (glm::vec3*)dL_dcolor, (glm::vec3*)dL_dmeans, (glm::vec3*)dL_dsh, dL_dcampos, enable_sh_grad);
+    computeColorFromSH(idx, D, M, (glm::vec3*)means, *campos, shs, clamped, (glm::vec3*)dL_dcolor, (glm::vec3*)dL_dmeans, (glm::vec3*)dL_dsh, dL_dcam, enable_sh_grad);
 
   // Compute gradient updates due to computing covariance from scale/rotation
   if (scales)

@@ -193,9 +193,10 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
     dL_dextra_attrs = torch::zeros({P, F}, means3D.options());
   else
     dL_dextra_attrs = torch::empty({0}, means3D.options());
-  torch::Tensor dL_dviewmatrix = torch::zeros({4, 4}, means3D.options());
-  torch::Tensor dL_dprojmatrix = torch::zeros({4, 4}, means3D.options());
-  torch::Tensor dL_dcampos = torch::zeros({3}, means3D.options());
+  // avoid apply AtomicAdd operation during computation for each 3D GS 
+  torch::Tensor dL_dviewmatrix = torch::zeros({P, 4, 4}, means3D.options());
+  torch::Tensor dL_dprojmatrix = torch::zeros({P, 4, 4}, means3D.options());
+  torch::Tensor dL_dcampos = torch::zeros({P, 3}, means3D.options());
   
   if(P != 0)
   {  
@@ -245,8 +246,11 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Te
       enable_sh_grad,
       debug);
   }
+  torch::Tensor dL_dview = torch::sum(dL_dviewmatrix, 0);
+  torch::Tensor dL_dproj = torch::sum(dL_dprojmatrix, 0);;
+  torch::Tensor dL_dcam = torch::sum(dL_dcampos, 0);
 
-  return std::make_tuple(dL_dmeans2D, dL_dcolors, dL_dopacity, dL_dmeans3D, dL_dcov3D, dL_dnorm3D, dL_dsh, dL_dscales, dL_drotations, dL_dextra_attrs, dL_dviewmatrix, dL_dprojmatrix, dL_dcampos);
+  return std::make_tuple(dL_dmeans2D, dL_dcolors, dL_dopacity, dL_dmeans3D, dL_dcov3D, dL_dnorm3D, dL_dsh, dL_dscales, dL_drotations, dL_dextra_attrs, dL_dview, dL_dproj, dL_dcam);
 }
 
 torch::Tensor markVisible(
